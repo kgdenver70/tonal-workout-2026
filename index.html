@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0a0a0a" />
+<title>TONAL/OFF — Free Lift Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=JetBrains+Mono:wght@300..700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface-2: #1c1c1c;
+    --border: #262626;
+    --border-bright: #3a3a3a;
+    --text: #fafafa;
+    --text-2: #a0a0a0;
+    --text-3: #525252;
+    --accent: #ff4d1a;
+  }
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+    overscroll-behavior: none;
+    min-height: 100vh;
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-feature-settings: "zero" 1; }
+  .display { font-family: 'Bricolage Grotesque', sans-serif; font-variation-settings: "wdth" 75; font-weight: 700; letter-spacing: -0.04em; line-height: 0.95; }
+  .num { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 500; font-feature-settings: "zero" 1, "tnum" 1; }
+  .gridbg {
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: -1px -1px;
+  }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+  .fade-in { animation: fadeIn 0.25s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .stripe {
+    background-image: repeating-linear-gradient(45deg, var(--accent) 0px, var(--accent) 6px, transparent 6px, transparent 12px);
+  }
+  button { transition: background-color 0.15s, border-color 0.15s, transform 0.1s, opacity 0.15s; }
+  button:active:not(:disabled) { transform: scale(0.98); }
+  .input-base {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text);
+    outline: none;
+    width: 100%;
+  }
+  .input-base:focus { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+const WORKOUTS = {
+  chest_arms: {
+    id: 'chest_arms', name: 'Chest & Arms', code: 'D1',
+    exercises: [
+      { name: 'Cable Chest Press', sets: 3, reps: 12 },
+      { name: 'Cable Chest Fly', sets: 3, reps: 12 },
+      { name: 'Bicep Curl', sets: 3, reps: 12 },
+      { name: 'Tricep Pushdown', sets: 3, reps: 12 },
+      { name: 'Overhead Tricep Extension', sets: 3, reps: 12 }
+    ]
+  },
+  back_shoulders: {
+    id: 'back_shoulders', name: 'Back & Shoulders', code: 'D2',
+    exercises: [
+      { name: 'Cable Row', sets: 3, reps: 12 },
+      { name: 'Lat Pulldown', sets: 3, reps: 12 },
+      { name: 'Lateral Raise', sets: 3, reps: 12 },
+      { name: 'Reverse Fly', sets: 3, reps: 12 },
+      { name: 'Face Pull', sets: 3, reps: 12 }
+    ]
+  },
+  legs_glutes: {
+    id: 'legs_glutes', name: 'Legs & Glutes', code: 'D3',
+    exercises: [
+      { name: 'Goblet Squat', sets: 3, reps: 12 },
+      { name: 'Romanian Deadlift', sets: 3, reps: 12 },
+      { name: 'Reverse Lunge', sets: 3, reps: 10 },
+      { name: 'Glute Kickback', sets: 3, reps: 12 },
+      { name: 'Calf Raise', sets: 3, reps: 15 }
+    ]
+  },
+  core: {
+    id: 'core', name: 'Core & Conditioning', code: 'D4',
+    exercises: [
+      { name: 'Cable Woodchop', sets: 3, reps: 12 },
+      { name: 'Pallof Press', sets: 3, reps: 10 },
+      { name: 'Cable Crunch', sets: 3, reps: 15 },
+      { name: 'Standing Oblique Crunch', sets: 3, reps: 12 },
+      { name: 'Plank-to-Row', sets: 3, reps: 10 }
+    ]
+  }
+};
+const ORDER = ['chest_arms', 'back_shoulders', 'legs_glutes', 'core'];
+
+const KEY = 'tonal_off_v1';
+let memoryStore = null;
+const Storage = {
+  load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {
+      if (memoryStore) return memoryStore;
+    }
+    return { sessions: [], walks: [], settings: { walkingGoalMin: 150 } };
+  },
+  save(data) {
+    memoryStore = data;
+    try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {}
+  }
+};
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const todayISO = () => new Date().toISOString().split('T')[0];
+const startOfWeek = (d = new Date()) => {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diff = x.getDate() - day + (day === 0 ? -6 : 1);
+  const out = new Date(x.setDate(diff));
+  out.setHours(0,0,0,0);
+  return out;
+};
+const dateFmt = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const dayFmt = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+
+function suggestWeight(exerciseName, sessions) {
+  for (let i = sessions.length - 1; i >= 0; i--) {
+    const ex = sessions[i].exercises.find(e => e.name === exerciseName);
+    if (ex && ex.sets.length > 0) {
+      const sets = ex.sets;
+      const tpl = WORKOUTS[sessions[i].workoutId] && WORKOUTS[sessions[i].workoutId].exercises.find(e => e.name === exerciseName);
+      const target = tpl ? tpl.reps : 12;
+      const allHit = sets.every(s => s.reps >= target);
+      const lastEffort = sets[sets.length - 1].effort;
+      const lastWeight = sets[0].weight;
+      let suggestion = lastWeight, note = 'hold';
+      if (allHit && lastEffort === 'easy')      { suggestion = lastWeight + 5;   note = '+5 lb'; }
+      else if (allHit && lastEffort === 'right'){ suggestion = lastWeight + 2.5; note = '+2.5 lb'; }
+      else if (allHit && lastEffort === 'hard') { suggestion = lastWeight;       note = 'hold'; }
+      else                                       { suggestion = Math.max(lastWeight - 5, 5); note = '-5 lb'; }
+      return { weight: suggestion, note, last: lastWeight, lastReps: sets.map(s => s.reps).join('/'), lastEffort };
+    }
+  }
+  return null;
+}
+
+function nextWorkoutId(sessions) {
+  const strength = sessions.filter(s => s.workoutId);
+  if (strength.length === 0) return ORDER[0];
+  const lastId = strength[strength.length - 1].workoutId;
+  return ORDER[(ORDER.indexOf(lastId) + 1) % ORDER.length];
+}
+
+const App = {
+  state: {
+    data: null,
+    view: 'today',
+    activeWorkout: null,
+    historyExercise: null,
+    expandedSessions: new Set(),
+    expandedExercises: new Set(),
+    editingGoal: false,
+    selectedWalkType: 'outdoor'
+  },
+
+  init() {
+    this.state.data = Storage.load();
+    this.render();
+  },
+
+  save() { Storage.save(this.state.data); },
+
+  setView(view) {
+    this.state.view = view;
+    if (view !== 'log') this.state.activeWorkout = null;
+    if (view !== 'history') this.state.historyExercise = null;
+    this.state.editingGoal = false;
+    this.render();
+    window.scrollTo(0, 0);
+  },
+
+  startWorkout(workoutId) {
+    this.state.activeWorkout = workoutId;
+    this.state.view = 'log';
+    this.state.expandedExercises = new Set(WORKOUTS[workoutId].exercises.map(e => e.name));
+    this.render();
+    window.scrollTo(0, 0);
+  },
+
+  cancelWorkout() {
+    this.state.activeWorkout = null;
+    this.render();
+  },
+
+  saveSession() {
+    const workoutId = this.state.activeWorkout;
+    if (!workoutId) return;
+    const exercises = [];
+    document.querySelectorAll('[data-exercise]').forEach(exEl => {
+      const name = exEl.dataset.exercise;
+      const sets = [];
+      exEl.querySelectorAll('[data-set]').forEach(setEl => {
+        const wEl = setEl.querySelector('[data-field="weight"]');
+        const rEl = setEl.querySelector('[data-field="reps"]');
+        const effort = setEl.dataset.effort || 'right';
+        const weight = wEl && wEl.value;
+        const reps = rEl && rEl.value;
+        if (weight !== '' && weight != null && reps !== '' && reps != null) {
+          sets.push({ weight: Number(weight), reps: Number(reps), effort: effort });
+        }
+      });
+      if (sets.length > 0) exercises.push({ name: name, sets: sets });
+    });
+    if (exercises.length === 0) {
+      alert('Log at least one set before saving.');
+      return;
+    }
+    this.state.data.sessions.push({
+      id: Date.now(),
+      date: todayISO(),
+      workoutId: workoutId,
+      exercises: exercises
+    });
+    this.save();
+    this.state.activeWorkout = null;
+    this.state.view = 'today';
+    this.render();
+    window.scrollTo(0, 0);
+  },
+
+  deleteSession(id) {
+    if (!confirm('Delete this session?')) return;
+    this.state.data.sessions = this.state.data.sessions.filter(s => s.id !== id);
+    this.save();
+    this.render();
+  },
+
+  addWalk() {
+    const durEl = document.querySelector('[data-walk-field="duration"]');
+    const distEl = document.querySelector('[data-walk-field="distance"]');
+    const duration = Number(durEl && durEl.value);
+    if (!duration || duration <= 0) return;
+    const distance = distEl && distEl.value ? Number(distEl.value) : null;
+    this.state.data.walks.push({
+      id: Date.now(),
+      date: todayISO(),
+      duration: duration,
+      distance: distance,
+      type: this.state.selectedWalkType
+    });
+    this.save();
+    this.render();
+  },
+
+  deleteWalk(id) {
+    this.state.data.walks = this.state.data.walks.filter(w => w.id !== id);
+    this.save();
+    this.render();
+  },
+
+  setEffort(exerciseName, setIdx, effort) {
+    const setEl = document.querySelector('[data-exercise="' + exerciseName + '"] [data-set="' + setIdx + '"]');
+    if (!setEl) return;
+    setEl.dataset.effort = effort;
+    setEl.querySelectorAll('[data-effort-opt]').forEach(b => {
+      const active = b.dataset.effortOpt === effort;
+      b.className = 'flex-1 py-2 text-[9px] mono tracking-wider ' + (active ? 'bg-[var(--accent)] text-black font-bold' : 'bg-[var(--bg)] text-[var(--text-2)]');
+    });
+  },
+
+  toggleExercise(name) {
+    if (this.state.expandedExercises.has(name)) this.state.expandedExercises.delete(name);
+    else this.state.expandedExercises.add(name);
+    this.render();
+  },
+
+  toggleSession(id) {
+    if (this.state.expandedSessions.has(id)) this.state.expandedSessions.delete(id);
+    else this.state.expandedSessions.add(id);
+    this.render();
+  },
+
+  setWalkType(type) {
+    this.state.selectedWalkType = type;
+    document.querySelectorAll('[data-walk-type]').forEach(b => {
+      const active = b.dataset.walkType === type;
+      b.className = active
+        ? 'py-2 text-[10px] mono tracking-wider border rounded bg-[var(--accent)] text-black border-[var(--accent)] font-bold'
+        : 'py-2 text-[10px] mono tracking-wider border rounded border-[var(--border)] text-[var(--text-2)] bg-[var(--bg)]';
+    });
+  },
+
+  setHistoryExercise(name) {
+    this.state.historyExercise = this.state.historyExercise === name ? null : name;
+    this.render();
+  },
+
+  toggleEditGoal() {
+    this.state.editingGoal = !this.state.editingGoal;
+    this.render();
+  },
+
+  saveGoal() {
+    const el = document.querySelector('[data-goal-input]');
+    const val = Number(el && el.value);
+    if (val > 0) this.state.data.settings.walkingGoalMin = val;
+    this.save();
+    this.state.editingGoal = false;
+    this.render();
+  },
+
+  render() {
+    document.getElementById('app').innerHTML =
+      '<div class="min-h-screen pb-24 gridbg">' +
+        renderHeader(this.state.view) +
+        '<main class="px-4 max-w-2xl mx-auto fade-in">' + this.renderView() + '</main>' +
+        renderNav(this.state.view) +
+      '</div>';
+  },
+
+  renderView() {
+    switch (this.state.view) {
+      case 'today':   return renderToday(this.state.data);
+      case 'log':     return this.state.activeWorkout
+                        ? renderLogger(this.state.activeWorkout, this.state.data.sessions, this.state.expandedExercises)
+                        : renderPickWorkout(this.state.data.sessions);
+      case 'walk':    return renderWalk(this.state.data, this.state.editingGoal, this.state.selectedWalkType);
+      case 'history': return renderHistory(this.state.data, this.state.historyExercise, this.state.expandedSessions);
+      default:        return '';
+    }
+  }
+};
+window.App = App;
+
+function renderHeader(view) {
+  const titles = { today: 'TODAY', log: 'LOG SESSION', walk: 'WALK LOG', history: 'HISTORY' };
+  return '' +
+    '<header class="sticky top-0 z-20 backdrop-blur-md bg-[rgba(10,10,10,0.85)] border-b border-[var(--border)]">' +
+      '<div class="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">' +
+        '<div class="flex items-center gap-2">' +
+          '<div class="w-1.5 h-1.5 bg-[var(--accent)] rounded-full" style="box-shadow: 0 0 8px var(--accent);"></div>' +
+          '<span class="mono text-[11px] tracking-[0.2em] text-[var(--text-2)]">TONAL/OFF</span>' +
+        '</div>' +
+        '<span class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)]">' + esc(titles[view] || '') + '</span>' +
+      '</div>' +
+    '</header>';
+}
+
+function renderNav(view) {
+  const items = [
+    { id: 'today', label: 'TODAY' },
+    { id: 'log', label: 'LOG' },
+    { id: 'walk', label: 'WALK' },
+    { id: 'history', label: 'HISTORY' }
+  ];
+  return '<nav class="fixed bottom-0 left-0 right-0 z-20 backdrop-blur-md bg-[rgba(10,10,10,0.92)] border-t border-[var(--border)]">' +
+    '<div class="max-w-2xl mx-auto px-2 py-2 grid grid-cols-4 gap-1">' +
+      items.map(it =>
+        '<button onclick="App.setView(\'' + it.id + '\')" ' +
+          'class="py-2.5 mono text-[10px] tracking-[0.2em] rounded ' + (view === it.id ? 'bg-[var(--accent)] text-black font-bold' : 'text-[var(--text-2)] hover:bg-[var(--surface)]') + '">' +
+          it.label +
+        '</button>'
+      ).join('') +
+    '</div></nav>';
+}
+
+function statCard(label, value, unit, hint, accent) {
+  return '<div class="p-4 border rounded-xl bg-[var(--surface)] ' + (accent ? 'border-[var(--accent)]' : 'border-[var(--border)]') + '">' +
+    '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)]">' + esc(label) + '</div>' +
+    '<div class="flex items-baseline gap-1.5 mt-2">' +
+      '<span class="num text-3xl">' + esc(value) + '</span>' +
+      '<span class="mono text-[10px] text-[var(--text-3)]">' + esc(unit) + '</span>' +
+    '</div>' +
+    '<div class="mono text-[10px] text-[var(--text-3)] mt-1.5">' + esc(hint) + '</div>' +
+  '</div>';
+}
+
+function renderToday(data) {
+  const recId = nextWorkoutId(data.sessions);
+  const workout = WORKOUTS[recId];
+  const weekStartISO = startOfWeek().toISOString().split('T')[0];
+  const weekSessions = data.sessions.filter(s => s.date >= weekStartISO);
+  const weekWalks = data.walks.filter(w => w.date >= weekStartISO);
+  const walkMin = weekWalks.reduce((s,w) => s + (w.duration||0), 0);
+  const walkCount = weekWalks.length;
+  const goal = data.settings.walkingGoalMin;
+  const lastSession = data.sessions[data.sessions.length - 1];
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  let html = '<div class="space-y-4 py-5">' +
+    '<div>' +
+      '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)]">' + esc(timeStr.toUpperCase()) + '</div>' +
+      '<h1 class="display text-4xl mt-2">' + esc(dateStr) + '</h1>' +
+    '</div>' +
+
+    '<div class="relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">' +
+      '<div class="absolute top-0 left-0 right-0 h-[3px] stripe"></div>' +
+      '<div class="absolute top-3 right-3 mono text-[9px] tracking-[0.2em] text-[var(--text-3)]">NEXT IN ROTATION</div>' +
+      '<div class="p-5 pt-7">' +
+        '<div class="mono text-[11px] tracking-[0.2em] text-[var(--accent)]">' + workout.code + '</div>' +
+        '<h2 class="display text-4xl mt-1">' + esc(workout.name) + '</h2>' +
+        '<div class="flex flex-wrap gap-1.5 mt-4 mb-5">' +
+          workout.exercises.map(e =>
+            '<span class="mono text-[10px] px-2 py-1 bg-[var(--surface-2)] border border-[var(--border)] rounded text-[var(--text-2)]">' + esc(e.name) + '</span>'
+          ).join('') +
+        '</div>' +
+        '<button onclick="App.startWorkout(\'' + workout.id + '\')" ' +
+          'class="w-full py-3.5 bg-[var(--accent)] text-black mono font-bold tracking-[0.15em] text-sm rounded-lg hover:brightness-110">' +
+          'START SESSION' +
+        '</button>' +
+        '<button onclick="App.setView(\'log\')" ' +
+          'class="w-full mt-2 py-2 mono text-[10px] tracking-[0.2em] text-[var(--text-3)] hover:text-[var(--text-2)]">' +
+          'OR PICK DIFFERENT DAY →' +
+        '</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="grid grid-cols-2 gap-3">' +
+      statCard('STRENGTH', weekSessions.length, '/ 4', 'sessions this week', weekSessions.length >= 4) +
+      statCard('WALKING', walkMin, 'min', walkCount + ' walks · goal ' + goal, walkMin >= goal) +
+    '</div>' +
+
+    '<button onclick="App.setView(\'walk\')" ' +
+      'class="w-full p-4 border border-dashed border-[var(--border-bright)] rounded-xl flex items-center justify-between hover:bg-[var(--surface)] hover:border-[var(--accent)]">' +
+      '<div class="text-left">' +
+        '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)]">QUICK ADD</div>' +
+        '<div class="text-sm text-[var(--text-2)] mt-0.5">Log a walk</div>' +
+      '</div>' +
+      '<div class="mono text-xs text-[var(--accent)]">→</div>' +
+    '</button>';
+
+  if (lastSession) {
+    html += '<div class="space-y-2">' +
+      '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)] px-1">LAST SESSION</div>' +
+      sessionCard(lastSession, false, false) +
+    '</div>';
+  }
+
+  if (data.sessions.length === 0 && data.walks.length === 0) {
+    html += '<div class="p-5 border border-dashed border-[var(--border)] rounded-xl text-center">' +
+      '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)] mb-2">FIRST RUN</div>' +
+      '<p class="text-sm text-[var(--text-2)]">Log your first session — the tracker learns your weights and auto-suggests from session two onward.</p>' +
+    '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function renderPickWorkout(sessions) {
+  return '<div class="space-y-3 py-5">' +
+    '<h2 class="display text-4xl mb-3">Pick a session</h2>' +
+    ORDER.map(id => {
+      const w = WORKOUTS[id];
+      const lastForDay = sessions.slice().reverse().find(s => s.workoutId === id);
+      return '<button onclick="App.startWorkout(\'' + id + '\')" ' +
+        'class="w-full p-4 border border-[var(--border)] rounded-xl bg-[var(--surface)] hover:border-[var(--accent)] text-left">' +
+        '<div class="flex items-center justify-between">' +
+          '<div>' +
+            '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)]">' + w.code + '</div>' +
+            '<div class="text-xl mt-1">' + esc(w.name) + '</div>' +
+            '<div class="mono text-[10px] text-[var(--text-3)] mt-1">' +
+              (lastForDay ? 'LAST: ' + dateFmt(lastForDay.date).toUpperCase() : 'NEVER LOGGED') +
+            '</div>' +
+          '</div>' +
+          '<div class="mono text-xs text-[var(--text-2)]">' + w.exercises.length + ' EX →</div>' +
+        '</div>' +
+      '</button>';
+    }).join('') +
+  '</div>';
+}
+
+function renderLogger(workoutId, sessions, expandedExercises) {
+  const workout = WORKOUTS[workoutId];
+  return '<div class="space-y-4 py-5">' +
+    '<div>' +
+      '<div class="mono text-[11px] tracking-[0.2em] text-[var(--accent)]">' + workout.code + '</div>' +
+      '<h2 class="display text-4xl mt-1">' + esc(workout.name) + '</h2>' +
+    '</div>' +
+    '<div class="space-y-3">' +
+      workout.exercises.map(e => {
+        const sg = suggestWeight(e.name, sessions);
+        const expanded = expandedExercises.has(e.name);
+        return exerciseLogger(e, sg, expanded);
+      }).join('') +
+    '</div>' +
+    '<div class="grid grid-cols-[1fr_2fr] gap-2 pt-2">' +
+      '<button onclick="App.cancelWorkout()" class="py-3.5 border border-[var(--border)] rounded-lg mono text-xs tracking-[0.15em] text-[var(--text-2)] bg-[var(--bg)] hover:bg-[var(--surface)]">CANCEL</button>' +
+      '<button onclick="App.saveSession()" class="py-3.5 bg-[var(--accent)] text-black rounded-lg mono text-xs tracking-[0.15em] font-bold hover:brightness-110">SAVE SESSION</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function exerciseLogger(exercise, suggestion, expanded) {
+  const defaultWeight = suggestion ? suggestion.weight : '';
+  const safeName = esc(exercise.name);
+  const jsName = exercise.name.replace(/'/g, "\\'");
+  let setsHtml = '';
+  if (expanded) {
+    setsHtml = '<div class="px-4 pb-4 space-y-2 border-t border-[var(--border)] pt-3">' +
+      '<div class="grid grid-cols-[20px_1fr_1fr_108px] gap-2 mono text-[9px] tracking-[0.15em] text-[var(--text-3)] pb-1">' +
+        '<span>#</span><span>WEIGHT</span><span>REPS</span><span class="text-center">FEEL</span>' +
+      '</div>';
+    for (let idx = 0; idx < exercise.sets; idx++) {
+      setsHtml += '<div data-set="' + idx + '" data-effort="" class="grid grid-cols-[20px_1fr_1fr_108px] gap-2 items-center">' +
+        '<span class="mono text-xs text-[var(--text-3)]">' + (idx + 1) + '</span>' +
+        '<input type="number" inputmode="decimal" step="0.5" data-field="weight" value="' + esc(defaultWeight) + '" placeholder="lb" class="num input-base text-sm py-2"/>' +
+        '<input type="number" inputmode="numeric" data-field="reps" value="' + exercise.reps + '" placeholder="reps" class="num input-base text-sm py-2"/>' +
+        '<div class="flex border border-[var(--border)] rounded overflow-hidden">' +
+          ['easy:EASY','right:RT','hard:HARD'].map(o => {
+            const [v, l] = o.split(':');
+            return '<button data-effort-opt="' + v + '" onclick="App.setEffort(\'' + jsName + '\', ' + idx + ', \'' + v + '\')" class="flex-1 py-2 text-[9px] mono tracking-wider bg-[var(--bg)] text-[var(--text-2)]">' + l + '</button>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+    }
+    setsHtml += '</div>';
+  }
+
+  let suggestionHtml = '';
+  if (suggestion) {
+    suggestionHtml = '<div class="mono text-[10px] mt-1.5 text-[var(--text-3)] leading-relaxed">' +
+      'LAST ' + esc(suggestion.last) + 'LB · ' + esc(suggestion.lastReps) + ' REPS · ' + esc((suggestion.lastEffort || '').toUpperCase()) + '<br/>' +
+      '<span class="text-[var(--accent)]">SUGGEST ' + esc(suggestion.weight) + 'LB · ' + esc(suggestion.note.toUpperCase()) + '</span>' +
+    '</div>';
+  } else {
+    suggestionHtml = '<div class="mono text-[10px] mt-1.5 text-[var(--text-3)]">FIRST TIME · TARGET ' + exercise.reps + ' REPS</div>';
+  }
+
+  return '<div data-exercise="' + safeName + '" class="border border-[var(--border)] rounded-xl bg-[var(--surface)] overflow-hidden">' +
+    '<button onclick="App.toggleExercise(\'' + jsName + '\')" class="w-full p-4 flex items-start justify-between text-left hover:bg-[var(--surface-2)]">' +
+      '<div class="flex-1 min-w-0">' +
+        '<div class="text-base">' + safeName + '</div>' +
+        suggestionHtml +
+      '</div>' +
+      '<div class="mono text-base text-[var(--text-3)] ml-2 leading-none">' + (expanded ? '−' : '+') + '</div>' +
+    '</button>' +
+    setsHtml +
+  '</div>';
+}
+
+function renderWalk(data, editingGoal, selectedWalkType) {
+  const weekStartISO = startOfWeek().toISOString().split('T')[0];
+  const weekWalks = data.walks.filter(w => w.date >= weekStartISO);
+  const weekMin = weekWalks.reduce((s,w) => s + (w.duration||0), 0);
+  const goal = data.settings.walkingGoalMin;
+  const pct = Math.min(100, (weekMin / goal) * 100);
+
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const iso = d.toISOString().split('T')[0];
+    const minutes = data.walks.filter(w => w.date === iso).reduce((s,w) => s + (w.duration||0), 0);
+    days.push({ iso: iso, label: d.toLocaleDateString('en-US', { weekday: 'narrow' }), minutes: minutes });
+  }
+  const maxDay = Math.max.apply(null, days.map(d => d.minutes).concat([30]));
+
+  let goalControl;
+  if (!editingGoal) {
+    goalControl = '<span class="mono text-xs text-[var(--text-3)]">/ ' + goal + ' MIN</span>' +
+      '<button onclick="App.toggleEditGoal()" class="ml-2 mono text-[9px] text-[var(--text-3)] hover:text-[var(--accent)] underline">EDIT</button>';
+  } else {
+    goalControl = '<span class="mono text-xs text-[var(--text-3)]">/</span>' +
+      '<input data-goal-input type="number" value="' + goal + '" class="num w-16 bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-xs focus:border-[var(--accent)] focus:outline-none"/>' +
+      '<button onclick="App.saveGoal()" class="mono text-[9px] text-[var(--accent)]">SAVE</button>';
+  }
+
+  const walkTypeButtons = ['outdoor','treadmill','incidental'].map(t => {
+    const active = t === selectedWalkType;
+    return '<button data-walk-type="' + t + '" onclick="App.setWalkType(\'' + t + '\')" class="' +
+      (active
+        ? 'py-2 text-[10px] mono tracking-wider border rounded bg-[var(--accent)] text-black border-[var(--accent)] font-bold'
+        : 'py-2 text-[10px] mono tracking-wider border rounded border-[var(--border)] text-[var(--text-2)] bg-[var(--bg)]') +
+      '">' + t.toUpperCase() + '</button>';
+  }).join('');
+
+  const recentWalks = data.walks.slice().reverse().slice(0, 15).map(w => {
+    return '<div class="p-3 border border-[var(--border)] rounded-lg bg-[var(--surface)] flex items-center justify-between">' +
+      '<div class="flex-1">' +
+        '<div class="flex items-baseline gap-2">' +
+          '<span class="num text-base">' + w.duration + '</span>' +
+          '<span class="mono text-[10px] text-[var(--text-3)]">MIN</span>' +
+          (w.distance ? '<span class="mono text-[10px] text-[var(--text-3)]">·</span><span class="num text-sm">' + w.distance + '</span><span class="mono text-[10px] text-[var(--text-3)]">MI</span>' : '') +
+        '</div>' +
+        '<div class="mono text-[10px] text-[var(--text-3)] mt-0.5">' + dayFmt(w.date) + ' ' + dateFmt(w.date) + ' · ' + (w.type || '').toUpperCase() + '</div>' +
+      '</div>' +
+      '<button onclick="App.deleteWalk(' + w.id + ')" class="text-[var(--text-3)] mono text-base hover:text-[var(--accent)] px-2">×</button>' +
+    '</div>';
+  }).join('');
+
+  return '<div class="space-y-4 py-5">' +
+    '<h2 class="display text-4xl">Walk Log</h2>' +
+
+    '<div class="p-4 border border-[var(--border)] rounded-xl bg-[var(--surface)]">' +
+      '<div class="flex items-end justify-between mb-3">' +
+        '<div>' +
+          '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)]">THIS WEEK</div>' +
+          '<div class="mt-1 flex items-baseline gap-1.5 flex-wrap">' +
+            '<span class="num text-3xl">' + weekMin + '</span>' +
+            goalControl +
+          '</div>' +
+        '</div>' +
+        '<div class="mono text-xs text-[var(--accent)]">' + Math.round(pct) + '%</div>' +
+      '</div>' +
+      '<div class="h-1 bg-[var(--border)] rounded overflow-hidden">' +
+        '<div class="h-full bg-[var(--accent)] transition-all duration-500" style="width: ' + pct + '%"></div>' +
+      '</div>' +
+      '<div class="grid grid-cols-7 gap-1 mt-4 h-16 items-end">' +
+        days.map(d => {
+          const heightStyle = d.minutes > 0
+            ? 'height: ' + Math.max(8, (d.minutes / maxDay) * 100) + '%'
+            : 'height: 4px';
+          return '<div class="flex flex-col items-center gap-1 h-full justify-end">' +
+            '<div class="w-full flex-1 flex items-end">' +
+              '<div class="w-full rounded-sm ' + (d.minutes > 0 ? 'bg-[var(--accent)]' : 'bg-[var(--border)]') + '" style="' + heightStyle + '"></div>' +
+            '</div>' +
+            '<span class="mono text-[9px] text-[var(--text-3)]">' + d.label + '</span>' +
+          '</div>';
+        }).join('') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="p-4 border border-[var(--border)] rounded-xl bg-[var(--surface)] space-y-3">' +
+      '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)]">LOG A WALK</div>' +
+      '<div class="grid grid-cols-2 gap-2">' +
+        '<label class="block">' +
+          '<span class="mono text-[10px] text-[var(--text-3)]">MINUTES</span>' +
+          '<input type="number" inputmode="numeric" data-walk-field="duration" placeholder="30" class="num input-base text-base py-2.5 mt-1"/>' +
+        '</label>' +
+        '<label class="block">' +
+          '<span class="mono text-[10px] text-[var(--text-3)]">MILES <span class="opacity-50">(opt)</span></span>' +
+          '<input type="number" inputmode="decimal" step="0.1" data-walk-field="distance" placeholder="2.0" class="num input-base text-base py-2.5 mt-1"/>' +
+        '</label>' +
+      '</div>' +
+      '<div>' +
+        '<div class="mono text-[10px] text-[var(--text-3)] mb-1">TYPE</div>' +
+        '<div class="grid grid-cols-3 gap-1">' + walkTypeButtons + '</div>' +
+      '</div>' +
+      '<button onclick="App.addWalk()" class="w-full py-3 bg-[var(--accent)] text-black mono font-bold tracking-[0.15em] text-sm rounded-lg hover:brightness-110">LOG WALK</button>' +
+    '</div>' +
+
+    '<div class="space-y-2">' +
+      '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)] px-1">RECENT</div>' +
+      (data.walks.length === 0
+        ? '<div class="text-center py-8 text-[var(--text-3)] mono text-xs tracking-wider">NO WALKS LOGGED</div>'
+        : recentWalks) +
+    '</div>' +
+  '</div>';
+}
+
+function renderHistory(data, historyExercise, expandedSessions) {
+  const exerciseHistory = {};
+  data.sessions.forEach(s => {
+    s.exercises.forEach(ex => {
+      if (!exerciseHistory[ex.name]) exerciseHistory[ex.name] = [];
+      const maxWeight = Math.max.apply(null, ex.sets.map(set => set.weight));
+      exerciseHistory[ex.name].push({ date: s.date, weight: maxWeight });
+    });
+  });
+  const names = Object.keys(exerciseHistory).sort();
+
+  let progressSection = '';
+  if (names.length > 0) {
+    progressSection = '<div class="space-y-2">' +
+      '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)] px-1">EXERCISE PROGRESS</div>' +
+      '<div class="flex flex-wrap gap-1.5">' +
+        names.map(name => {
+          const active = historyExercise === name;
+          const jsName = name.replace(/'/g, "\\'");
+          return '<button onclick="App.setHistoryExercise(\'' + jsName + '\')" ' +
+            'class="mono text-[10px] px-2 py-1.5 border rounded ' + (active ? 'bg-[var(--accent)] text-black border-[var(--accent)] font-bold' : 'border-[var(--border)] text-[var(--text-2)] hover:border-[var(--border-bright)]') + '">' +
+            esc(name.toUpperCase()) +
+          '</button>';
+        }).join('') +
+      '</div>' +
+      (historyExercise && exerciseHistory[historyExercise] ? progressChart(exerciseHistory[historyExercise]) : '') +
+    '</div>';
+  }
+
+  const sessionsList = data.sessions.length === 0
+    ? '<div class="text-center py-12 text-[var(--text-3)] mono text-xs tracking-wider">NO SESSIONS LOGGED</div>'
+    : data.sessions.slice().reverse().map(s => sessionCard(s, true, expandedSessions.has(s.id))).join('');
+
+  return '<div class="space-y-4 py-5">' +
+    '<h2 class="display text-4xl">History</h2>' +
+    progressSection +
+    '<div class="space-y-2">' +
+      '<div class="mono text-[10px] tracking-[0.2em] text-[var(--text-3)] px-1">ALL SESSIONS (' + data.sessions.length + ')</div>' +
+      sessionsList +
+    '</div>' +
+  '</div>';
+}
+
+function sessionCard(session, deletable, expanded) {
+  const w = WORKOUTS[session.workoutId];
+  if (!w) return '';
+  let detail = '';
+  if (expanded) {
+    detail = '<div class="px-3 pb-3 pt-1 border-t border-[var(--border)] space-y-1.5 mt-1">' +
+      session.exercises.map(ex =>
+        '<div class="flex justify-between text-xs gap-3">' +
+          '<span class="text-[var(--text-2)] truncate">' + esc(ex.name) + '</span>' +
+          '<span class="mono text-[10px] text-[var(--text-3)] flex-shrink-0">' +
+            ex.sets.map(s => esc(s.weight) + '×' + esc(s.reps)).join(' · ') +
+          '</span>' +
+        '</div>'
+      ).join('') +
+    '</div>';
+  }
+  return '<div class="border border-[var(--border)] rounded-xl bg-[var(--surface)] overflow-hidden">' +
+    '<div class="p-3 flex items-start justify-between">' +
+      '<button onclick="App.toggleSession(' + session.id + ')" class="flex-1 text-left">' +
+        '<div class="flex items-center gap-2">' +
+          '<span class="mono text-[10px] text-[var(--accent)]">' + w.code + '</span>' +
+          '<span class="text-base">' + esc(w.name) + '</span>' +
+        '</div>' +
+        '<div class="mono text-[10px] text-[var(--text-3)] mt-1">' +
+          dayFmt(session.date) + ' ' + dateFmt(session.date) + ' · ' + session.exercises.length + ' EXERCISES · ' +
+          session.exercises.reduce((s, e) => s + e.sets.length, 0) + ' SETS' +
+        '</div>' +
+      '</button>' +
+      (deletable ? '<button onclick="App.deleteSession(' + session.id + ')" class="text-[var(--text-3)] mono text-base hover:text-[var(--accent)] px-2 leading-none">×</button>' : '') +
+    '</div>' +
+    detail +
+  '</div>';
+}
+
+function progressChart(data) {
+  if (data.length < 2) {
+    return '<div class="p-6 border border-[var(--border)] rounded-xl bg-[var(--surface)] text-center mono text-[10px] text-[var(--text-3)] tracking-wider">NEED 2+ SESSIONS FOR CHART · CURRENTLY ' + data.length + '</div>';
+  }
+  const weights = data.map(d => d.weight);
+  const max = Math.max.apply(null, weights), min = Math.min.apply(null, weights);
+  const range = max - min || max * 0.2 || 5;
+  const padMin = min - range * 0.1;
+  const padMax = max + range * 0.1;
+  const w = 600, h = 160, pad = 24;
+  const points = data.map((d, i) => {
+    const x = pad + (i / Math.max(data.length - 1, 1)) * (w - pad * 2);
+    const y = h - pad - ((d.weight - padMin) / (padMax - padMin)) * (h - pad * 2);
+    return { x: x, y: y, date: d.date };
+  });
+  const path = points.map((p, i) => (i === 0 ? 'M' : 'L') + ' ' + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' ');
+  const areaPath = path + ' L ' + points[points.length-1].x.toFixed(1) + ' ' + (h-pad) + ' L ' + points[0].x.toFixed(1) + ' ' + (h-pad) + ' Z';
+  return '<div class="p-4 border border-[var(--border)] rounded-xl bg-[var(--surface)] mt-2">' +
+    '<div class="flex justify-between mb-2 items-baseline">' +
+      '<span class="mono text-[10px] tracking-wider text-[var(--text-2)]">MAX WEIGHT</span>' +
+      '<span class="mono text-[10px] text-[var(--accent)]">' + min + '–' + max + ' LB · ' + data.length + ' SESSIONS</span>' +
+    '</div>' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" class="w-full" preserveAspectRatio="none">' +
+      '<defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="var(--accent)" stop-opacity="0.25" />' +
+        '<stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />' +
+      '</linearGradient></defs>' +
+      '<path d="' + areaPath + '" fill="url(#grad)" />' +
+      '<path d="' + path + '" stroke="var(--accent)" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round" />' +
+      points.map(p => '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3.5" fill="var(--bg)" stroke="var(--accent)" stroke-width="2" />').join('') +
+    '</svg>' +
+    '<div class="flex justify-between mt-1">' +
+      '<span class="mono text-[9px] text-[var(--text-3)]">' + dateFmt(data[0].date) + '</span>' +
+      '<span class="mono text-[9px] text-[var(--text-3)]">' + dateFmt(data[data.length-1].date) + '</span>' +
+    '</div>' +
+  '</div>';
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => App.init());
+} else {
+  App.init();
+}
+</script>
+</body>
+</html>
